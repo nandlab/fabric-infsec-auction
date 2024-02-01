@@ -36,7 +36,7 @@ const (
 // Bid data
 type Bid struct {
 	Buyer        string `json:"buyer"`        // the potential buyer's address
-	BidPrice     uint   `json:"bidPrice"`     // 0 means hidden, later set the actual bid price during reveal
+	BidPrice     uint64 `json:"bidPrice"`     // 0 means hidden, later set the actual bid price during reveal
 	HiddenCommit []byte `json:"hiddenCommit"` // 64 byte SHAKE256 output of (clientID, bidPrice, salt)
 }
 
@@ -45,10 +45,10 @@ type Auction struct {
 	Name           string        `json:"name"`   // The auction name should be globally unique
 	Seller         string        `json:"seller"` // The seller who opened this auction
 	Status         AuctionStatus `json:"status"`
-	DirectBuyPrice uint          `json:"directBuyPrice"` // A buyer can directly buy the item by paying at least this price (0 means disabled)
+	DirectBuyPrice uint64        `json:"directBuyPrice"` // A buyer can directly buy the item by paying at least this price (0 means disabled)
 	Bids           []Bid         `json:"bids"`
 	Winner         *string       `json:"winner"`
-	HammerPrice    uint          `json:"hammerPrice"`
+	HammerPrice    uint64        `json:"hammerPrice"`
 }
 
 //**************************************************************
@@ -91,8 +91,10 @@ func putAuction(ctx contractapi.TransactionContextInterface, auction *Auction) e
 	return ctx.GetStub().PutState(auctionKey(auction.Name), auctionBin)
 }
 
+/**************** AUCTION SELLER METHODS ****************/
+
 // CreateAuction creates a new auction
-func (s *SmartContract) CreateAuction(ctx contractapi.TransactionContextInterface, auctionName string, directBuyPrice uint) error {
+func (s *SmartContract) CreateAuction(ctx contractapi.TransactionContextInterface, auctionName string, directBuyPrice uint64) error {
 
 	// get ID of submitting client
 	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
@@ -128,14 +130,10 @@ func (s *SmartContract) CreateAuction(ctx contractapi.TransactionContextInterfac
 	return nil
 }
 
-func isAuctionStatusValid(status AuctionStatus) bool {
-	return uint(status) < uint(AuctionStatus(NumberOfStatuses))
-}
-
 // UpdateAuctionStatus updates the auction status (this can only be done by the auction seller)
-func (s *SmartContract) UpdateAuctionStatus(ctx contractapi.TransactionContextInterface, auctionName string, newStatus AuctionStatus) error {
+func (s *SmartContract) CloseAuction(ctx contractapi.TransactionContextInterface, auctionName string) error {
 
-	// get ID of submitting client
+	// Get ID of submitting client
 	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
 	if errClientID != nil {
 		return fmt.Errorf("failed to get client identity: %v", errClientID)
@@ -155,24 +153,13 @@ func (s *SmartContract) UpdateAuctionStatus(ctx contractapi.TransactionContextIn
 		return fmt.Errorf("only the auction seller can update the auction status")
 	}
 
-	// Check newStatus validity
-	if !isAuctionStatusValid(newStatus) {
-		return fmt.Errorf("requested new auction status is not valid")
-	}
-	if uint(newStatus) < uint(auction.Status) {
-		return fmt.Errorf("the status cannot be decreased")
-	}
-	if newStatus == AuctionStatus(Ended) {
-		return fmt.Errorf("cannot end the auction with this function")
-	}
-
-	if uint(newStatus) == uint(auction.Status) {
-		// Nothing changed
+	// If auction is already closed, do nothing
+	if auction.Status != AuctionStatus(Open) {
 		return nil
 	}
 
-	// Finally update the auction status
-	auction.Status = newStatus
+	// Change auction status from open to closed
+	auction.Status = AuctionStatus(Closed)
 	errPutAuction := putAuction(ctx, auction)
 	if errPutAuction != nil {
 		return fmt.Errorf("failed to save the updated auction")
@@ -181,7 +168,117 @@ func (s *SmartContract) UpdateAuctionStatus(ctx contractapi.TransactionContextIn
 	return nil
 }
 
-// make bid
+// EndAuction determines the highest bidder and the hammer price
+func (s *SmartContract) EndAuction(ctx contractapi.TransactionContextInterface, auctionName string) error {
+	// Get ID of submitting client
+	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
+	if errClientID != nil {
+		return fmt.Errorf("failed to get client identity: %v", errClientID)
+	}
+
+	// Get auction from world state
+	auction, errGetAuction := getAuction(ctx, auctionName)
+	if errGetAuction != nil {
+		return fmt.Errorf("could not get the auction: %v", errGetAuction)
+	}
+	if auction == nil {
+		return fmt.Errorf("auction not found")
+	}
+
+	// Check if the submitting client is the seller of the auction
+	if auction.Seller != clientID {
+		return fmt.Errorf("only the auction seller can close the auction")
+	}
+
+	if auction.Status == AuctionStatus(Ended) {
+		return fmt.Errorf("auction has already ended")
+	}
+	if auction.Status == AuctionStatus(Open) {
+		return fmt.Errorf("auction is not closed yet")
+	}
+
+	// Build a mapping from the buyer to their highest bid
+	buyerToBid := make(map[string]uint64)
+	for i := range auction.Bids {
+		bid := &auction.Bids[i]
+		if bid.BidPrice == 0 {
+			return fmt.Errorf("not all bids are revealed yet")
+		}
+		prevBid, exists := buyerToBid[bid.Buyer]
+		if !exists || bid.BidPrice > prevBid {
+			buyerToBid[bid.Buyer] = bid.BidPrice
+		}
+	}
+
+	type BidPriceBuyerPair struct {
+		BidPrice uint64
+		Buyer    string
+	}
+
+	// Convert map to (BidPrice, Buyer) slice
+	bidPriceToBuyer := make([]BidPriceBuyerPair, 0, len(buyerToBid))
+
+	for buyer, bidPrice := range buyerToBid {
+		bidPriceToBuyer = append(bidPriceToBuyer, BidPriceBuyerPair{
+			BidPrice: bidPrice,
+			Buyer:    buyer,
+		})
+	}
+
+	// Sort bidders by bid price
+	sort.Slice(bidPriceToBuyer, func(i int, j int) bool {
+		return bidPriceToBuyer[i].BidPrice > bidPriceToBuyer[j].BidPrice
+	})
+
+	if len(bidPriceToBuyer) == 0 {
+		// No bids submitted => no winner
+		fmt.Printf("No bids were submitted, auction ended without a winner\n")
+		return nil
+	}
+
+	// Determine hammer price
+	hammerPrice := bidPriceToBuyer[0].BidPrice
+	if len(bidPriceToBuyer) > 1 {
+		hammerPrice = bidPriceToBuyer[1].BidPrice
+	}
+
+	// If there are multiple bidders with the same highest bid, one is chosen at random
+	numberOfCandidates := uint(0)
+	for i := range bidPriceToBuyer {
+		if bidPriceToBuyer[i].BidPrice < hammerPrice {
+			break
+		}
+		numberOfCandidates += 1
+	}
+	winningCandidate, errRand := rand.Int(rand.Reader, new(big.Int).SetUint64(uint64(numberOfCandidates)))
+	if errRand == nil {
+		return fmt.Errorf("could not get a random number: %v", errRand)
+	}
+
+	if !winningCandidate.IsUint64() {
+		return fmt.Errorf("winning candidate index cannot be represented as a uint64")
+	}
+	winner := &bidPriceToBuyer[winningCandidate.Uint64()].Buyer
+
+	// End the auction
+	auction.HammerPrice = hammerPrice
+	auction.Winner = winner
+	auction.Status = AuctionStatus(Ended)
+	errPutAuction := putAuction(ctx, auction)
+	if errPutAuction != nil {
+		return fmt.Errorf("could not save ended auction: %v", errPutAuction)
+	}
+
+	// Annouce the auction winner
+	fmt.Printf("Auction winner is: %s\n", *winner)
+	fmt.Printf("Item sold for: %d\n", hammerPrice)
+
+	return nil
+}
+
+/**************** AUCTION BIDDER METHODS ****************/
+
+// Bid is called by a bidder to submit a hidden bid
 func (s *SmartContract) Bid(ctx contractapi.TransactionContextInterface, auctionName string, hiddenCommit []byte) error {
 	// get ID of submitting client
 	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
@@ -219,8 +316,8 @@ func (s *SmartContract) Bid(ctx contractapi.TransactionContextInterface, auction
 	return nil
 }
 
-// reveal bid
-func (s *SmartContract) OpenBid(ctx contractapi.TransactionContextInterface, auctionName string, bidPrice uint, salt []byte) error {
+// OpenBid reveals the bid price of a bid
+func (s *SmartContract) OpenBid(ctx contractapi.TransactionContextInterface, auctionName string, bidPrice uint64, salt []byte) error {
 	// Check if the bidPrice is reasonable
 	if bidPrice == 0 {
 		return fmt.Errorf("bid price cannot be zero")
@@ -252,13 +349,13 @@ func (s *SmartContract) OpenBid(ctx contractapi.TransactionContextInterface, auc
 		if bid.Buyer == clientID && bid.BidPrice == 0 {
 			// Compute hash
 			shake := sha3.NewShake256()
-			bidPriceBytes := make([]byte, 4)
-			binary.BigEndian.PutUint32(bidPriceBytes, uint32(bidPrice))
+			bidPriceBytes := [8]byte{}
+			binary.BigEndian.PutUint64(bidPriceBytes[:], bidPrice)
 			clientIDBytes, errClientIDDecode := base64.StdEncoding.DecodeString(clientID)
 			if errClientIDDecode != nil {
 				return fmt.Errorf("base64 decoding of client ID failed: %v", errClientIDDecode)
 			}
-			for _, data := range [][]byte{clientIDBytes, bidPriceBytes, salt} {
+			for _, data := range [][]byte{clientIDBytes, bidPriceBytes[:], salt} {
 				_, errShakeWrite := shake.Write(data)
 				if errShakeWrite != nil {
 					return fmt.Errorf("failed to write data to SHAKE: %v", errShakeWrite)
@@ -286,116 +383,8 @@ func (s *SmartContract) OpenBid(ctx contractapi.TransactionContextInterface, auc
 	return nil
 }
 
-// close auction
-func (s *SmartContract) EndAuction(ctx contractapi.TransactionContextInterface, auctionName string) error {
-	// Get ID of submitting client
-	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
-	if errClientID != nil {
-		return fmt.Errorf("failed to get client identity: %v", errClientID)
-	}
-
-	// Get auction from world state
-	auction, errGetAuction := getAuction(ctx, auctionName)
-	if errGetAuction != nil {
-		return fmt.Errorf("could not get the auction: %v", errGetAuction)
-	}
-	if auction == nil {
-		return fmt.Errorf("auction not found")
-	}
-
-	// Check if the submitting client is the seller of the auction
-	if auction.Seller != clientID {
-		return fmt.Errorf("only the auction seller can close the auction")
-	}
-
-	if auction.Status == AuctionStatus(Ended) {
-		return fmt.Errorf("auction has already ended")
-	}
-	if auction.Status == AuctionStatus(Open) {
-		return fmt.Errorf("auction is not closed yet")
-	}
-
-	// Build a mapping from the buyer to their highest bid
-	buyerToBid := make(map[string]uint)
-	for i := range auction.Bids {
-		bid := &auction.Bids[i]
-		if bid.BidPrice == 0 {
-			return fmt.Errorf("not all bids are revealed yet")
-		}
-		prevBid, exists := buyerToBid[bid.Buyer]
-		if !exists || bid.BidPrice > prevBid {
-			buyerToBid[bid.Buyer] = bid.BidPrice
-		}
-	}
-
-	type BidPriceBuyerPair struct {
-		BidPrice uint
-		Buyer    string
-	}
-
-	// Convert map to (BidPrice, Buyer) array
-	bidPriceToBuyer := make([]BidPriceBuyerPair, 0, len(buyerToBid))
-
-	for buyer, bidPrice := range buyerToBid {
-		bidPriceToBuyer = append(bidPriceToBuyer, BidPriceBuyerPair{
-			BidPrice: bidPrice,
-			Buyer:    buyer,
-		})
-	}
-
-	// Sort bidders by bid price
-	sort.Slice(bidPriceToBuyer, func(i int, j int) bool {
-		return bidPriceToBuyer[i].BidPrice > bidPriceToBuyer[j].BidPrice
-	})
-
-	if len(bidPriceToBuyer) == 0 {
-		// No bids submitted => no winner
-		fmt.Printf("No bids were submitted, auction ended without a winner\n")
-		return nil
-	}
-
-	// Determine hammer price
-	hammerPrice := bidPriceToBuyer[0].BidPrice
-	if len(bidPriceToBuyer) > 1 {
-		hammerPrice = bidPriceToBuyer[1].BidPrice
-	}
-
-	// If there were multiplying bidder with the same highest bid, one is chosen at random
-	numberOfCandidates := uint(0)
-	for i := range bidPriceToBuyer {
-		if bidPriceToBuyer[i].BidPrice < hammerPrice {
-			break
-		}
-		numberOfCandidates += 1
-	}
-	winningCandidate, errRand := rand.Int(rand.Reader, new(big.Int).SetUint64(uint64(numberOfCandidates)))
-	if errRand == nil {
-		return fmt.Errorf("could not get a random number: %v", errRand)
-	}
-
-	if !winningCandidate.IsUint64() {
-		return fmt.Errorf("winning candidate index cannot be represented as a uint64")
-	}
-	winner := &bidPriceToBuyer[winningCandidate.Uint64()].Buyer
-
-	// End the auction
-	auction.HammerPrice = hammerPrice
-	auction.Winner = winner
-	auction.Status = AuctionStatus(Ended)
-	errPutAuction := putAuction(ctx, auction)
-	if errPutAuction != nil {
-		return fmt.Errorf("could not save ended auction: %v", errPutAuction)
-	}
-
-	// Annouce the auction winner
-	fmt.Printf("Auction winner is: %s\n", *winner)
-	fmt.Printf("Item sold for: %d\n", hammerPrice)
-
-	return nil
-}
-
 // DirectBuy: The buyer should pay at least auction.DirectBuyPrice to directly purchase the auction item
-func (s *SmartContract) DirectBuy(ctx contractapi.TransactionContextInterface, auctionName string, price uint) error {
+func (s *SmartContract) DirectBuy(ctx contractapi.TransactionContextInterface, auctionName string, price uint64) error {
 	// Get ID of submitting client
 	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
 	if errClientID != nil {
@@ -421,7 +410,7 @@ func (s *SmartContract) DirectBuy(ctx contractapi.TransactionContextInterface, a
 		return fmt.Errorf("direct buy is disabled for this auction")
 	}
 	if price < auction.DirectBuyPrice {
-		return fmt.Errorf("payment amount is not enough")
+		return fmt.Errorf("payment amount not sufficient for a direct buy")
 	}
 
 	// End the auction
