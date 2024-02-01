@@ -13,7 +13,8 @@ const { buildCCPOrg1, buildCCPOrg2, buildWallet, prettyJSONString } = require('/
 const myChannel = 'mychannel';
 const myChaincodeName = 'auction';
 
-async function createAuction (ccp, wallet, user, auctionName, directBuyPrice) {
+
+async function directBuy (ccp, wallet, user, auctionName, price) {
 	try {
 		const gateway = new Gateway();
 		// connect using Discovery enabled
@@ -23,14 +24,19 @@ async function createAuction (ccp, wallet, user, auctionName, directBuyPrice) {
 
 		const network = await gateway.getNetwork(myChannel);
 		const contract = network.getContract(myChaincodeName);
+		const clientID = gateway.getIdentity();
 
-		const statefulTxn = contract.createTransaction('CreateAuction');
+		console.log(`Client ID is: ${clientID}`);
 
-		console.log('\n--> Submit Transaction: Propose a new auction');
-		await statefulTxn.submit(auctionName, directBuyPrice);
+		const statefulTxn = contract.createTransaction('DirectBuy');
+
+		console.log('\n--> Submit Transaction: Direct Buy');
+		await statefulTxn.submit(auctionName, price);
 		console.log('*** Result: committed');
 
 		gateway.disconnect();
+
+		return salt;
 	} catch (error) {
 		console.error(`******** FAILED to submit auction: ${error}`);
 	}
@@ -38,15 +44,15 @@ async function createAuction (ccp, wallet, user, auctionName, directBuyPrice) {
 
 async function main () {
 	try {
-		if (process.argv.length < 5) {
-			console.error(`Usage: $${process.argv[0]} ${process.argv[1]} org user auctionName [directBuyPrice]`);
+		if (process.argv.length < 6) {
+			console.error(`Usage: ${process.argv[0]} ${process.argv[1]} org user auctionName price`);
 			process.exit(1);
 		}
 
 		const org = process.argv[2];
 		const user = process.argv[3];
 		const auctionName = process.argv[4];
-		const directBuyPrice = process.argv[5] ?? 0;
+		const price = BigInt(process.argv[5]);
 		
 		org = org.toLowerCase();
 		let ccp = null;
@@ -64,7 +70,7 @@ async function main () {
 			process.exit(1);
 		}
 		const wallet = await buildWallet(Wallets, walletPath);
-		await createAuction(ccp, wallet, user, auctionName, directBuyPrice);
+		await directBuy(ccp, wallet, user, auctionName, price);
 	}
 	catch (error) {
 		console.error(`******** FAILED to run the application: ${error}`);

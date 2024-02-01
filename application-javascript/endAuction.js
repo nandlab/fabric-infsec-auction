@@ -13,7 +13,7 @@ const { buildCCPOrg1, buildCCPOrg2, buildWallet, prettyJSONString } = require('/
 const myChannel = 'mychannel';
 const myChaincodeName = 'auction';
 
-async function createAuction (ccp, wallet, user, auctionName, directBuyPrice) {
+async function endAuction (ccp, wallet, user, auctionName) {
 	try {
 		const gateway = new Gateway();
 		// connect using Discovery enabled
@@ -24,10 +24,10 @@ async function createAuction (ccp, wallet, user, auctionName, directBuyPrice) {
 		const network = await gateway.getNetwork(myChannel);
 		const contract = network.getContract(myChaincodeName);
 
-		const statefulTxn = contract.createTransaction('CreateAuction');
+		const statefulTxn = contract.createTransaction('EndAuction');
 
-		console.log('\n--> Submit Transaction: Propose a new auction');
-		await statefulTxn.submit(auctionName, directBuyPrice);
+		console.log('\n--> Submit Transaction: End the auction');
+		await statefulTxn.submit(auctionName);
 		console.log('*** Result: committed');
 
 		gateway.disconnect();
@@ -39,14 +39,13 @@ async function createAuction (ccp, wallet, user, auctionName, directBuyPrice) {
 async function main () {
 	try {
 		if (process.argv.length < 5) {
-			console.error(`Usage: $${process.argv[0]} ${process.argv[1]} org user auctionName [directBuyPrice]`);
+			console.error(`Usage: $${process.argv[0]} ${process.argv[1]} org user auctionName`);
 			process.exit(1);
 		}
 
 		const org = process.argv[2];
 		const user = process.argv[3];
 		const auctionName = process.argv[4];
-		const directBuyPrice = process.argv[5] ?? 0;
 		
 		org = org.toLowerCase();
 		let ccp = null;
@@ -64,7 +63,7 @@ async function main () {
 			process.exit(1);
 		}
 		const wallet = await buildWallet(Wallets, walletPath);
-		await createAuction(ccp, wallet, user, auctionName, directBuyPrice);
+		await closeAuction(ccp, wallet, user, auctionName);
 	}
 	catch (error) {
 		console.error(`******** FAILED to run the application: ${error}`);

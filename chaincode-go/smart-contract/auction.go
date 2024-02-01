@@ -35,9 +35,15 @@ const (
 
 // Bid data
 type Bid struct {
-	Buyer        string `json:"buyer"`        // the potential buyer's address
-	BidPrice     uint64 `json:"bidPrice"`     // 0 means hidden, later set the actual bid price during reveal
-	HiddenCommit []byte `json:"hiddenCommit"` // 64 byte SHAKE256 output of (clientID, bidPrice, salt)
+	Buyer        string `json:"buyer"`    // the potential buyer's address
+	BidPrice     uint64 `json:"bidPrice"` // 0 means hidden, later set the actual bid price during reveal
+	HiddenCommit []byte `json:"hiddenCommit"`
+	/*
+		HiddenCommit is the 64 byte SHAKE256 output of (clientID, bidPrice, salt)
+		* clientID is a string (?)
+		* the bidPrice is a big endian encoded 64 bit integer
+		* salt should be at least 64 bytes long
+	*/
 }
 
 // Auction data
@@ -187,14 +193,12 @@ func (s *SmartContract) EndAuction(ctx contractapi.TransactionContextInterface, 
 
 	// Check if the submitting client is the seller of the auction
 	if auction.Seller != clientID {
-		return fmt.Errorf("only the auction seller can close the auction")
+		return fmt.Errorf("only the auction seller can end the auction")
 	}
 
+	// If the auction has already ended, do nothing
 	if auction.Status == AuctionStatus(Ended) {
-		return fmt.Errorf("auction has already ended")
-	}
-	if auction.Status == AuctionStatus(Open) {
-		return fmt.Errorf("auction is not closed yet")
+		return nil
 	}
 
 	// Build a mapping from the buyer to their highest bid
@@ -202,7 +206,7 @@ func (s *SmartContract) EndAuction(ctx contractapi.TransactionContextInterface, 
 	for i := range auction.Bids {
 		bid := &auction.Bids[i]
 		if bid.BidPrice == 0 {
-			return fmt.Errorf("not all bids are revealed yet")
+			return fmt.Errorf("cannot end auction, because not all bids are revealed yet")
 		}
 		prevBid, exists := buyerToBid[bid.Buyer]
 		if !exists || bid.BidPrice > prevBid {
@@ -225,7 +229,7 @@ func (s *SmartContract) EndAuction(ctx contractapi.TransactionContextInterface, 
 		})
 	}
 
-	// Sort bidders by bid price
+	// Sort bidders by descending bid price
 	sort.Slice(bidPriceToBuyer, func(i int, j int) bool {
 		return bidPriceToBuyer[i].BidPrice > bidPriceToBuyer[j].BidPrice
 	})
