@@ -97,6 +97,17 @@ func putAuction(ctx contractapi.TransactionContextInterface, auction *Auction) e
 	return ctx.GetStub().PutState(auctionKey(auction.Name), auctionBin)
 }
 
+/**************** AUCTION GENERAL METHODS ****************/
+// GetClientID returns the client ID string
+func (s *SmartContract) GetClientID(ctx contractapi.TransactionContextInterface) (error, *string) {
+	// get ID of submitting client
+	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
+	if errClientID != nil {
+		return fmt.Errorf("failed to get client identity: %v", errClientID), nil
+	}
+	return nil, &clientID
+}
+
 /**************** AUCTION SELLER METHODS ****************/
 
 // CreateAuction creates a new auction

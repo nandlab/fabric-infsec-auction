@@ -15,7 +15,7 @@ const myChaincodeName = 'auction';
 
 const jsSHA = require("jssha");
 
-const { getRandomValues } = require('Crypto');
+const { getRandomValues } = require('node:crypto');
 
 function uint64EncodeBidEndian(n) {
 	let buffer = new ArrayBuffer(8);
@@ -31,48 +31,41 @@ function arrayToHexString(byteArray) {
 }
 
 function hashBid(clientID, bidPrice, salt) {
-	const shake = new jsSHA("SHAKE256");
-	shake.update(clientID);
-	shake.update(uint64EncodeBidEndian(bidPrice));
-	shake.update(salt);
-	return shaObj.getHash("BUFFER", {outputLen: 512});
+	const shake = new jsSHA("SHAKE256", "UINT8ARRAY");
+	for (const data of [clientID, uint64EncodeBidEndian(bidPrice), salt]) {
+		shake.update(data);
+	}
+	return shake.getHash("UINT8ARRAY", {outputLen: 512});
 }
 
 function generateSalt() {
-	let salt = Uint8Array(64);
+	let salt = new Uint8Array(64);
 	getRandomValues(salt);
 	return salt;
 }
 
 async function submitBid (ccp, wallet, user, auctionName, bidPrice) {
-	try {
-		const gateway = new Gateway();
-		// connect using Discovery enabled
+	const gateway = new Gateway();
+	// connect using Discovery enabled
 
-		await gateway.connect(ccp,
-			{ wallet: wallet, identity: user, discovery: { enabled: true, asLocalhost: true } });
+	await gateway.connect(ccp,
+		{ wallet: wallet, identity: user, discovery: { enabled: true, asLocalhost: true } });
 
-		const network = await gateway.getNetwork(myChannel);
-		const contract = network.getContract(myChaincodeName);
-		const clientID = gateway.getIdentity();
+	const network = await gateway.getNetwork(myChannel);
+	const contract = network.getContract(myChaincodeName);
+	const clientIdResponse = await contract.submitTransaction('GetClientID');
+	console.log(clientIdResponse);
 
-		console.log(`Client ID is: ${clientID}`);
+	let salt = generateSalt();
+	let bidHash = hashBid(clientID, bidPrice, salt);
+	
+	console.log('\n--> Submit Transaction: Bid');
+	await statefulTxn.submit(auctionName, bidHash);
+	console.log('*** Result: committed');
 
-		const statefulTxn = contract.createTransaction('Bid');
+	gateway.disconnect();
 
-		let salt = generateSalt();
-		let bidHash = hashBid(clientID, bidPrice, salt);
-		
-		console.log('\n--> Submit Transaction: Bid');
-		await statefulTxn.submit(auctionName, bidHash);
-		console.log('*** Result: committed');
-
-		gateway.disconnect();
-
-		return salt;
-	} catch (error) {
-		console.error(`******** FAILED to submit auction: ${error}`);
-	}
+	return salt;
 }
 
 async function main () {
@@ -110,4 +103,8 @@ async function main () {
 	}
 }
 
-main();
+if (require.main === module) {
+	main();
+}
+
+module.exports = {submitBid};

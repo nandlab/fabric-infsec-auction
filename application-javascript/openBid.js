@@ -14,31 +14,24 @@ const myChannel = 'mychannel';
 const myChaincodeName = 'auction';
 
 async function openBid (ccp, wallet, user, auctionName, bidPrice, salt) {
-	try {
-		const gateway = new Gateway();
-		// connect using Discovery enabled
+	const gateway = new Gateway();
+	// connect using Discovery enabled
 
-		await gateway.connect(ccp,
-			{ wallet: wallet, identity: user, discovery: { enabled: true, asLocalhost: true } });
+	await gateway.connect(ccp,
+		{ wallet: wallet, identity: user, discovery: { enabled: true, asLocalhost: true } });
 
-		const network = await gateway.getNetwork(myChannel);
-		const contract = network.getContract(myChaincodeName);
-		const clientID = gateway.getIdentity();
+	const network = await gateway.getNetwork(myChannel);
+	const contract = network.getContract(myChaincodeName);
 
-		console.log(`Client ID is: ${clientID}`);
+	const statefulTxn = contract.createTransaction('OpenBid');
 
-		const statefulTxn = contract.createTransaction('OpenBid');
+	console.log('\n--> Submit Transaction: Open Bid');
+	await statefulTxn.submit(auctionName, bidPrice, salt);
+	console.log('*** Result: committed');
 
-		console.log('\n--> Submit Transaction: Open Bid');
-		await statefulTxn.submit(auctionName, bidPrice, salt);
-		console.log('*** Result: committed');
+	gateway.disconnect();
 
-		gateway.disconnect();
-
-		return salt;
-	} catch (error) {
-		console.error(`******** FAILED to submit auction: ${error}`);
-	}
+	return salt;
 }
 
 async function main () {
@@ -79,4 +72,8 @@ async function main () {
 	}
 }
 
-main();
+if (require.main === module) {
+	main();
+}
+
+module.exports = {openBid};

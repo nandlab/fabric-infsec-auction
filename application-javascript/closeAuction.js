@@ -14,32 +14,28 @@ const myChannel = 'mychannel';
 const myChaincodeName = 'auction';
 
 async function closeAuction (ccp, wallet, user, auctionName) {
-	try {
-		const gateway = new Gateway();
-		// connect using Discovery enabled
+	const gateway = new Gateway();
+	// connect using Discovery enabled
 
-		await gateway.connect(ccp,
-			{ wallet: wallet, identity: user, discovery: { enabled: true, asLocalhost: true } });
+	await gateway.connect(ccp,
+		{ wallet: wallet, identity: user, discovery: { enabled: true, asLocalhost: true } });
 
-		const network = await gateway.getNetwork(myChannel);
-		const contract = network.getContract(myChaincodeName);
+	const network = await gateway.getNetwork(myChannel);
+	const contract = network.getContract(myChaincodeName);
 
-		const statefulTxn = contract.createTransaction('CloseAuction');
+	const statefulTxn = contract.createTransaction('CloseAuction');
 
-		console.log('\n--> Submit Transaction: Close the auction');
-		await statefulTxn.submit(auctionName);
-		console.log('*** Result: committed');
+	console.log('\n--> Submit Transaction: Close the auction');
+	await statefulTxn.submit(auctionName);
+	console.log('*** Result: committed');
 
-		gateway.disconnect();
-	} catch (error) {
-		console.error(`******** FAILED to submit auction: ${error}`);
-	}
+	gateway.disconnect();
 }
 
 async function main () {
 	try {
 		if (process.argv.length < 5) {
-			console.error(`Usage: ${process.argv[0]} org user auctionName`);
+			console.error(`Usage: ${process.argv[0]} ${process.argv[1]} org user auctionName`);
 			process.exit(1);
 		}
 
@@ -69,4 +65,8 @@ async function main () {
 	}
 }
 
-main();
+if (require.main === module) {
+	main();
+}
+
+module.exports = {closeAuction};

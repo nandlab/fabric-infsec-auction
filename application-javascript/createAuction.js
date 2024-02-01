@@ -26,19 +26,16 @@ async function createAuction (ccp, wallet, user, auctionName, directBuyPrice) {
 	const statefulTxn = contract.createTransaction('CreateAuction');
 
 	console.log('\n--> Submit Transaction: Propose a new auction');
-	let result = (await statefulTxn.submit(auctionName, directBuyPrice));
-	console.log(result);
+	await statefulTxn.submit(auctionName, directBuyPrice);
 	console.log('*** Result: committed');
 
 	gateway.disconnect();
 }
 
-module.exports = {createAuction};
-
 async function main () {
 	try {
 		if (process.argv.length < 5) {
-			console.error(`Usage: ${process.argv[0]} org user auctionName [directBuyPrice]`);
+			console.error(`Usage: ${process.argv[0]} ${process.argv[1]} org user auctionName [directBuyPrice]`);
 			process.exit(1);
 		}
 
@@ -72,3 +69,5 @@ async function main () {
 if (require.main === module) {
 	main();
 }
+
+module.exports = {createAuction};
