@@ -42,7 +42,7 @@ async function main () {
 		process.exit(1);
 	}
 
-	const org = process.argv[2];
+	const org = process.argv[2].toLowerCase();
 
 	try {
 		if (org === 'Org1' || org === 'org1') {

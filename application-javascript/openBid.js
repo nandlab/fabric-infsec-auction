@@ -48,7 +48,7 @@ async function main () {
 			process.exit(1);
 		}
 
-		const org = process.argv[2];
+		const org = process.argv[2].toLowerCase();
 		const user = process.argv[3];
 		const auctionName = process.argv[4];
 		const bidPrice = BigInt(process.argv[5]);
@@ -57,7 +57,6 @@ async function main () {
 		}
 		salt = BigInt(salt);
 		
-		org = org.toLowerCase();
 		let ccp = null;
 		let walletPath = null;
 		if (org === 'org1') {

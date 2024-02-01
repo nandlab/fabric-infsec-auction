@@ -42,7 +42,7 @@ async function main () {
 			process.exit(1);
 		}
 
-		const org = process.argv[2];
+		const org = process.argv[2].toLowerCase();
 		const user = process.argv[3];
 		// TODO: other function arguments
 		// ...

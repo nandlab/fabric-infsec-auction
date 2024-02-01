@@ -39,15 +39,14 @@ async function closeAuction (ccp, wallet, user, auctionName) {
 async function main () {
 	try {
 		if (process.argv.length < 5) {
-			console.error(`Usage: $${process.argv[0]} ${process.argv[1]} org user auctionName`);
+			console.error(`Usage: ${process.argv[0]} org user auctionName`);
 			process.exit(1);
 		}
 
-		const org = process.argv[2];
+		const org = process.argv[2].toLowerCase();
 		const user = process.argv[3];
 		const auctionName = process.argv[4];
 		
-		org = org.toLowerCase();
 		let ccp = null;
 		let walletPath = null;
 		if (org === 'org1') {
