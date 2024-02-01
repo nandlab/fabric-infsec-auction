@@ -13,7 +13,7 @@ const { buildCCPOrg1, buildCCPOrg2, buildWallet, prettyJSONString } = require('/
 const myChannel = 'mychannel';
 const myChaincodeName = 'auction';
 
-async function createAuction (ccp, wallet, user, /* TODO: Insert here parameters to call the CreateAuction function */) {
+async function createAuction (ccp, wallet, user, auctionName, directBuyPrice) {
 	try {
 		const gateway = new Gateway();
 		// connect using Discovery enabled
@@ -27,7 +27,7 @@ async function createAuction (ccp, wallet, user, /* TODO: Insert here parameters
 		const statefulTxn = contract.createTransaction('CreateAuction');
 
 		console.log('\n--> Submit Transaction: Propose a new auction');
-		await statefulTxn.submit( /* TODO: Insert here parameters to call the CreateAuction function */);
+		await statefulTxn.submit(auctionName, directBuyPrice);
 		console.log('*** Result: committed');
 
 		gateway.disconnect();
@@ -38,20 +38,20 @@ async function createAuction (ccp, wallet, user, /* TODO: Insert here parameters
 
 async function main () {
 	try {
-		if (process.argv[2] === undefined || process.argv[3] === undefined /* TODO: other function arguments */) {
+		if (process.argv.length < 5) {
 			process.exit(1);
 		}
 
 		const org = process.argv[2];
 		const user = process.argv[3];
-		// TODO: other function arguments
-		// ...
-
+		const auctionName = process.argv[4]
+		const directBuyPrice = process.argv[5] ?? 0;
+		
 		if (org === 'Org1' || org === 'org1') {
 			const ccp = buildCCPOrg1();
 			const walletPath = path.join(__dirname, 'wallet/org1');
 			const wallet = await buildWallet(Wallets, walletPath);
-			await createAuction(ccp, wallet, user, /* TODO: Insert your parameters here */);
+			await createAuction(ccp, wallet, user, auctionName, directBuyPrice);
 		/* Optional TODO: You might want to use more than one orgnization
 		} else if (org === 'Org2' || org === 'org2') {
 			const ccp = buildCCPOrg2();
