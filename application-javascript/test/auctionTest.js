@@ -15,6 +15,7 @@ const process = require('node:process');
 const { buildCCPOrg1, buildCCPOrg2, buildWallet, prettyJSONString } = require('/home/fabric-user/fabric-samples/test-application/javascript/AppUtil.js');
 const { randomUUID } = require('node:crypto');
 const { uint8ArrayToHex } = require('../encode-utils.js');
+const { X509Certificate } = require('node:crypto');
 
 function zip(...arr) {
 	return Array(Math.max(...arr.map(a => a.length))).fill().map((_,i) => arr.map(a => a[i]));
@@ -130,11 +131,17 @@ describe('Auction', function () {
 			console.log("Auction finished:");
 			console.log(auctionResult);
 
-			const winner = auctionResult.winner;
+			const winner = Buffer.from(auctionResult.winner, 'base64');
 			const hammerPrice = BigInt(auctionResult.hammerPrice);
-			
-			assert(winner.indexOf(bidders[1]) != 0, "The second bidder should win");
-			assert.equal(hammerPrice, 20n, "The hammer price should be 20");
+
+			const expectedWinnerID = await wallet.get(bidders[expectedWinner]);
+			if (expectedWinnerID.type !== "X.509") {
+				throw Error("Expected to read a X.509 certificate");
+			}
+			const expectedWinnerCertDer = new X509Certificate(expectedWinnerID.credentials.certificate).raw;
+
+			assert(winner.compare(expectedWinnerCertDer) == 0, "Unexpected winner");
+			assert.equal(hammerPrice, expectedHammerPrice, "The hammer price should be 20");
 		}
 		finally {
 			if (contract !== null && contractListener !== null) {
