@@ -1,3 +1,7 @@
+/*
+SPDX-License-Identifier: Apache-2.0
+*/
+
 package auction
 
 // enum possible status: open, closed, ended

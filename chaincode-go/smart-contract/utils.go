@@ -12,7 +12,7 @@ import (
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
-func (s *VickreyAuctionContract) GetSubmittingClientIdentity(ctx contractapi.TransactionContextInterface) (*x509.Certificate, error) {
+func getSubmittingClientIdentity(ctx contractapi.TransactionContextInterface) (*x509.Certificate, error) {
 	cert, err := ctx.GetClientIdentity().GetX509Certificate()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read clientID: %v", err)

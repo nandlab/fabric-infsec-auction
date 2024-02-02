@@ -26,7 +26,7 @@ type VickreyAuctionContract struct {
 func (s *VickreyAuctionContract) CreateAuction(ctx contractapi.TransactionContextInterface, auctionName string, directBuyPrice uint64) error {
 
 	// get ID of submitting client
-	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
+	clientID, errClientID := getSubmittingClientIdentity(ctx)
 	if errClientID != nil {
 		return fmt.Errorf("failed to get client identity: %v", errClientID)
 	}
@@ -75,7 +75,7 @@ func (s *VickreyAuctionContract) CreateAuction(ctx contractapi.TransactionContex
 func (s *VickreyAuctionContract) CloseAuction(ctx contractapi.TransactionContextInterface, auctionName string) error {
 
 	// Get ID of submitting client
-	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
+	clientID, errClientID := getSubmittingClientIdentity(ctx)
 	if errClientID != nil {
 		return fmt.Errorf("failed to get client identity: %v", errClientID)
 	}
@@ -125,7 +125,7 @@ func (s *VickreyAuctionContract) CloseAuction(ctx contractapi.TransactionContext
 // EndAuction determines the highest bidder and the hammer price
 func (s *VickreyAuctionContract) EndAuction(ctx contractapi.TransactionContextInterface, auctionName string) error {
 	// Get ID of submitting client
-	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
+	clientID, errClientID := getSubmittingClientIdentity(ctx)
 	if errClientID != nil {
 		return fmt.Errorf("failed to get client identity: %v", errClientID)
 	}
@@ -290,7 +290,7 @@ func (s *VickreyAuctionContract) Bid(ctx contractapi.TransactionContextInterface
 	}
 
 	// Get ID of submitting client
-	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
+	clientID, errClientID := getSubmittingClientIdentity(ctx)
 	if errClientID != nil {
 		return fmt.Errorf("failed to get client identity: %v", errClientID)
 	}
@@ -345,7 +345,7 @@ func (s *VickreyAuctionContract) OpenBid(ctx contractapi.TransactionContextInter
 	}
 
 	// Get ID of submitting client
-	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
+	clientID, errClientID := getSubmittingClientIdentity(ctx)
 	if errClientID != nil {
 		return fmt.Errorf("failed to get client identity: %v", errClientID)
 	}
@@ -393,7 +393,7 @@ func (s *VickreyAuctionContract) OpenBid(ctx contractapi.TransactionContextInter
 // DirectBuy: The buyer should pay at least auction.DirectBuyPrice to directly purchase the auction item
 func (s *VickreyAuctionContract) DirectBuy(ctx contractapi.TransactionContextInterface, auctionName string, price uint64) error {
 	// Get ID of submitting client
-	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
+	clientID, errClientID := getSubmittingClientIdentity(ctx)
 	if errClientID != nil {
 		return fmt.Errorf("failed to get client identity: %v", errClientID)
 	}
