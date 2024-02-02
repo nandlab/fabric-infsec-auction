@@ -9,6 +9,7 @@
 const { Gateway, Wallets } = require('fabric-network');
 const path = require('path');
 const { buildCCPOrg1, buildCCPOrg2, buildWallet, prettyJSONString } = require('/home/fabric-user/fabric-samples/test-application/javascript/AppUtil.js');
+const { X509Certificate } = require('crypto');
 
 const myChannel = 'mychannel';
 const myChaincodeName = 'auction';
@@ -42,23 +43,76 @@ async function main () {
 		const org = process.argv[2].toLowerCase();
 		const user = process.argv[3];
 		const auctionName = process.argv[4];
+
+		let contract = null;
+		let gateway = null;
+		let contractListener = null;
+
+		try {
+			gateway = new Gateway();
+			await gateway.connect(ccp,
+				{ wallet: wallet, identity: "admin", discovery: { enabled: true, asLocalhost: true } });
 		
-		let ccp = null;
-		let walletPath = null;
-		if (org === 'org1') {
-			ccp = buildCCPOrg1();
-			walletPath = path.join(__dirname, 'wallet/org1');
+			// Listen to auction events
+			const network = await gateway.getNetwork(myChannel);
+			contract = network.getContract(myChaincodeName);
+			const auctionKey = `auction ${auctionName}`;
+			let resultPromiseResolver = null;
+			let auctionResult = null
+			contractListener = (event) => {
+				if (event.eventName == auctionKey) {
+					const auctionSummary = JSON.parse(event.payload.toString("utf8"));
+					console.log(`Auction status: ${auctionSummary.status}`);
+					auctionResult = auctionSummary.result;
+					if (resultPromiseResolver !== null) {
+						resultPromiseResolver(auctionResult);
+					}
+				}
+			};
+			contract.addContractListener(contractListener);
+
+			let ccp = null;
+			let walletPath = null;
+			if (org === 'org1') {
+				ccp = buildCCPOrg1();
+				walletPath = path.join(__dirname, 'wallet/org1');
+			}
+			else if (org === 'org2') {
+				ccp = buildCCPOrg2();
+				walletPath = path.join(__dirname, 'wallet/org2');
+			}
+			else {
+				console.error('Org must be org1 or org2 ...');
+				process.exit(1);
+			}
+			const wallet = await buildWallet(Wallets, walletPath);
+			await endAuction(ccp, wallet, user, auctionName);
+
+			// Wait for the auction to end
+			await new Promise((resolve, reject) => {
+				if (auctionResult !== null) {
+					resolve(auctionResult);
+				}
+				else {
+					resultPromiseResolver = resolve;
+				}
+			});
+
+			const winner = Buffer.from(auctionResult.winner, 'base64');
+			const hammerPrice = BigInt(auctionResult.hammerPrice);
+
+			console.log("The auction winner is:");
+			console.log(new X509Certificate(winner).toString());
+			console.log(`The hammer price is: ${hammerPrice}`);
 		}
-		else if (org === 'org2') {
-			ccp = buildCCPOrg2();
-			walletPath = path.join(__dirname, 'wallet/org2');
+		finally {
+			if (contract !== null && contractListener !== null) {
+				contract.removeContractListener(contractListener);
+			}
+			if (gateway !== null) {
+				gateway.disconnect();
+			}
 		}
-		else {
-			console.error('Org must be org1 or org2 ...');
-			process.exit(1);
-		}
-		const wallet = await buildWallet(Wallets, walletPath);
-		await endAuction(ccp, wallet, user, auctionName);
 	}
 	catch (error) {
 		console.error(`******** FAILED to run the application: ${error}`);
