@@ -5,23 +5,19 @@ SPDX-License-Identifier: Apache-2.0
 package auction
 
 import (
-	"encoding/base64"
+	"crypto/x509"
 	"fmt"
 
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
-func (s *VickreyAuctionContract) GetSubmittingClientIdentity(ctx contractapi.TransactionContextInterface) (string, error) {
+func (s *VickreyAuctionContract) GetSubmittingClientIdentity(ctx contractapi.TransactionContextInterface) (*x509.Certificate, error) {
 
-	b64ID, err := ctx.GetClientIdentity().GetID()
+	cert, err := ctx.GetClientIdentity().GetX509Certificate()
 	if err != nil {
-		return "", fmt.Errorf("failed to read clientID: %v", err)
+		return nil, fmt.Errorf("failed to read clientID: %v", err)
 	}
-	decodeID, err := base64.StdEncoding.DecodeString(b64ID)
-	if err != nil {
-		return "", fmt.Errorf("failed to base64 decode clientID: %v", err)
-	}
-	return string(decodeID), nil
+	return cert, nil
 }
 
 func intToByteArray(val int) []byte {

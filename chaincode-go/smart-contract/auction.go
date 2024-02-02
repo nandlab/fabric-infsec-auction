@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"math/big"
 	"reflect"
@@ -33,9 +34,32 @@ const (
 	Ended                       // Auction is closed and winner is set
 )
 
+// certDerToPem converts a certificate from binary DER to PEM text format
+func certDerToPem(derCert []byte) *string {
+	pemCertBytes := pem.EncodeToMemory(&pem.Block{
+		Type:    "CERTIFICATE",
+		Headers: nil,
+		Bytes:   derCert,
+	})
+	if pemCertBytes == nil {
+		return nil
+	}
+	pemCert := string(pemCertBytes)
+	return &pemCert
+}
+
+// certPemToDer converts a certificate from PEM text to binary DER format
+func certPemToDer(pemCert string) []byte {
+	block, _ := pem.Decode([]byte(pemCert))
+	if block == nil {
+		return nil
+	}
+	return block.Bytes
+}
+
 // Bid data
 type Bid struct {
-	Buyer        string `json:"buyer"`    // the potential buyer's address
+	Buyer        []byte `json:"buyer"`    // the certificate of the potential buyer
 	BidPrice     uint64 `json:"bidPrice"` // 0 means hidden, later set the actual bid price during reveal
 	HiddenCommit []byte `json:"hiddenCommit"`
 	/*
@@ -48,27 +72,27 @@ type Bid struct {
 
 type Auction struct {
 	Name           string        `json:"name"`   // The auction name should be globally unique
-	Seller         string        `json:"seller"` // The seller who opened this auction
+	Seller         []byte        `json:"seller"` // The seller who opened this auction
 	Status         AuctionStatus `json:"status"`
 	DirectBuyPrice uint64        `json:"directBuyPrice"` // A buyer can directly buy the item by paying at least this price (0 means disabled)
 	Bids           []Bid         `json:"bids"`
-	Winner         *string       `json:"winner"`
+	Winner         []byte        `json:"winner"`
 	HammerPrice    uint64        `json:"hammerPrice"`
 }
 
 // Auction status information, which will be presented to the users in an event
 type AuctionSummary struct {
 	Name           string         `json:"name"`
-	Seller         string         `json:"seller"`
+	Seller         []byte         `json:"seller"`
 	Status         AuctionStatus  `json:"status"`
 	DirectBuyPrice uint64         `json:"directBuyPrice"`
 	Result         *AuctionResult `json:"result"`
 }
 
 type AuctionResult struct {
-	Winner      *string `json:"winner"`
-	DirectBuy   bool    `json:"directBuy"` // If true, the winner bought directly, otherwise they were the highest bidder
-	HammerPrice uint64  `json:"hammerPrice"`
+	Winner      []byte `json:"winner"`
+	DirectBuy   bool   `json:"directBuy"` // If true, the winner bought directly, otherwise they were the highest bidder
+	HammerPrice uint64 `json:"hammerPrice"`
 }
 
 //**************************************************************
@@ -163,7 +187,7 @@ func (s *VickreyAuctionContract) CreateAuction(ctx contractapi.TransactionContex
 	// create new auction and save it
 	auction := Auction{
 		Name:           auctionName,
-		Seller:         clientID,
+		Seller:         clientID.Raw,
 		Status:         AuctionStatus(Open),
 		DirectBuyPrice: directBuyPrice,
 		Bids:           []Bid{},
@@ -210,7 +234,7 @@ func (s *VickreyAuctionContract) CloseAuction(ctx contractapi.TransactionContext
 	}
 
 	// Check if the submitting client is the seller of the auction
-	if auction.Seller != clientID {
+	if !reflect.DeepEqual(auction.Seller, clientID.Raw) {
 		return fmt.Errorf("only the auction seller can update the auction status")
 	}
 
@@ -260,7 +284,7 @@ func (s *VickreyAuctionContract) EndAuction(ctx contractapi.TransactionContextIn
 	}
 
 	// Check if the submitting client is the seller of the auction
-	if auction.Seller != clientID {
+	if !reflect.DeepEqual(auction.Seller, clientID.Raw) {
 		return fmt.Errorf("only the auction seller can end the auction")
 	}
 
@@ -269,31 +293,39 @@ func (s *VickreyAuctionContract) EndAuction(ctx contractapi.TransactionContextIn
 		return nil
 	}
 
-	// Build a mapping from the buyer to their highest bid
+	// Build a mapping from the buyer (PEM certificate) to their highest bid
 	buyerToBid := make(map[string]uint64)
 	for i := range auction.Bids {
 		bid := &auction.Bids[i]
 		if bid.BidPrice == 0 {
 			return fmt.Errorf("cannot end auction, because not all bids are revealed yet")
 		}
-		prevBid, exists := buyerToBid[bid.Buyer]
+		buyerCertPem := certDerToPem(bid.Buyer)
+		if buyerCertPem == nil {
+			return fmt.Errorf("could not convert certificate from DER to PEM format")
+		}
+		prevBid, exists := buyerToBid[*buyerCertPem]
 		if !exists || bid.BidPrice > prevBid {
-			buyerToBid[bid.Buyer] = bid.BidPrice
+			buyerToBid[*buyerCertPem] = bid.BidPrice
 		}
 	}
 
 	type BidPriceBuyerPair struct {
 		BidPrice uint64
-		Buyer    string
+		Buyer    []byte
 	}
 
 	// Convert map to (BidPrice, Buyer) slice
 	bidPriceToBuyer := make([]BidPriceBuyerPair, 0, len(buyerToBid))
 
 	for buyer, bidPrice := range buyerToBid {
+		buyerCertDer := certPemToDer(buyer)
+		if buyerCertDer == nil {
+			return fmt.Errorf("could not convert certificate from PEM to DER format")
+		}
 		bidPriceToBuyer = append(bidPriceToBuyer, BidPriceBuyerPair{
 			BidPrice: bidPrice,
-			Buyer:    buyer,
+			Buyer:    buyerCertDer,
 		})
 	}
 
@@ -348,7 +380,7 @@ func (s *VickreyAuctionContract) EndAuction(ctx contractapi.TransactionContextIn
 		if !winningCandidate.IsUint64() {
 			return fmt.Errorf("winning candidate index cannot be represented as a uint64")
 		}
-		winner := &bidPriceToBuyer[winningCandidate.Uint64()].Buyer
+		winner := bidPriceToBuyer[winningCandidate.Uint64()].Buyer
 
 		// Update auction state
 		auction.HammerPrice = hammerPrice
@@ -423,7 +455,7 @@ func (s *VickreyAuctionContract) Bid(ctx contractapi.TransactionContextInterface
 
 	// Add bid to auction
 	auction.Bids = append(auction.Bids, Bid{
-		Buyer:        clientID,
+		Buyer:        clientID.Raw,
 		BidPrice:     0,
 		HiddenCommit: hiddenCommit,
 	})
@@ -484,7 +516,7 @@ func (s *VickreyAuctionContract) OpenBid(ctx contractapi.TransactionContextInter
 	// Iterate over the bids and try to reveal any
 	for i := range auction.Bids {
 		bid := &auction.Bids[i]
-		if bid.Buyer == clientID && bid.BidPrice == 0 {
+		if reflect.DeepEqual(bid.Buyer, clientID.Raw) && bid.BidPrice == 0 {
 			// Check if hidden commit matches the hash
 			if reflect.DeepEqual(bid.HiddenCommit, bidHash) {
 				// The bid price is revealed
@@ -534,7 +566,7 @@ func (s *VickreyAuctionContract) DirectBuy(ctx contractapi.TransactionContextInt
 
 	// End the auction
 	auction.HammerPrice = price
-	auction.Winner = &clientID
+	auction.Winner = clientID.Raw
 	auction.Status = AuctionStatus(Ended)
 	errPutAuction := putAuction(ctx, auction)
 	if errPutAuction != nil {
