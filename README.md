@@ -50,8 +50,9 @@ done
 We can run the unit test with `npm run test`. It will simulate an auction and check if the winner and the hammer price at the end are correct. The unit test code can be found in `test/auctionTest.js`, it can be used as an example of how a user can interact with the auction from JavaScript.
 
 ## Command line interface
-The JavaScript files can also be called from the console to interact with the contract.
-The auction seller can execute the following files:
+The JavaScript programs can also be called from the console to interact with the contract.
+If a script is called without arguments, it will print the correct usage.
+The auction seller can execute the following commands:
 ```
 # Create an auction
 # Optionally, a directBuyPrice can be given.
