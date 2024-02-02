@@ -77,6 +77,27 @@ node ./openBid.js org user auctionName bidPrice salt
 node ./directBuy.js org user auctionName price
 ```
 
+## Command line interaction example
+```
+# Seller creates auction
+node ./createAuction.js org1 seller myAuction1 100
+
+# Collect bids (you must save the salts)
+node ./submitBid org1 bidder1 myAuction1 30
+node ./submitBid org1 bidder2 myAuction1 50
+
+# Seller closes auction
+node ./closeAuction.js org1 seller myAuction1 100
+
+# Bids are revealed (insert the salts)
+node ./openBid org1 bidder1 myAuction1 30 salt1
+node ./openBid org1 bidder2 myAuction1 50 salt2
+
+# Seller ends auction
+# bidder1 wins with hammer price 30
+node ./endAuction org1 seller myAuction1
+```
+
 ## Clean up
 
 When your are done using the auction smart contract, you can bring down the network and clean up the environment. In the `application-javascript` directory, run the following command to remove the wallets used to run the applications:
