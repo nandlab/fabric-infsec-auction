@@ -155,3 +155,4 @@ go.work
 
 wallet/
 *.bak
+/chaincode-go/chaincode-go

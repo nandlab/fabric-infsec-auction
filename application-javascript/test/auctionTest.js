@@ -133,7 +133,12 @@ describe('Auction', function () {
 			console.log(auctionResult);
 
 			const winner = Buffer.from(auctionResult.winner, 'base64');
+			const winnerCert = new X509Certificate(winner);
 			const hammerPrice = BigInt(auctionResult.hammerPrice);
+
+			console.log(`The hammer price is: ${hammerPrice}`);
+			console.log("Full X.509 certificate of the winner:");
+			console.log(winnerCert);
 
 			const expectedWinnerID = await wallet.get(bidders[expectedWinner]);
 			if (expectedWinnerID.type !== "X.509") {
@@ -263,6 +268,7 @@ describe('Auction', function () {
 			console.log(auctionResult);
 
 			const winner = Buffer.from(auctionResult.winner, 'base64');
+			const winnerCert = new X509Certificate(winner);
 			const hammerPrice = BigInt(auctionResult.hammerPrice);
 
 			const expectedWinnerID = await wallet.get(bidders[expectedWinner]);
@@ -270,6 +276,10 @@ describe('Auction', function () {
 				throw Error("Expected to read a X.509 certificate");
 			}
 			const expectedWinnerCertDer = new X509Certificate(expectedWinnerID.credentials.certificate).raw;
+
+			console.log(`The hammer price is: ${hammerPrice}`);
+			console.log("Full X.509 certificate of the winner:");
+			console.log(winnerCert);
 
 			assert(winner.compare(expectedWinnerCertDer) == 0, "Unexpected winner");
 			assert(auctionResult.directBuy, "Direct-buy flag should be set");
