@@ -34,8 +34,6 @@ async function directBuy (ccp, wallet, user, auctionName, price) {
 	console.log('*** Result: committed');
 
 	gateway.disconnect();
-
-	return salt;
 }
 
 async function main () {
