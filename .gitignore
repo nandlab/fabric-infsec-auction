@@ -156,3 +156,4 @@ go.work
 wallet/
 *.bak
 /chaincode-go/chaincode-go
+.DS_Store

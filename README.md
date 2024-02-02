@@ -21,7 +21,7 @@ You can then run the following command to deploy a new network.
 
 Run the following command to deploy the auction smart contract.
 ```
-"${TESTNETDIR}/network.sh" deployCC -ccn auction -ccp chaincode-go/ -ccl go
+"${TESTNETDIR}/network.sh" deployCC -ccn auction -ccv v1.0 -ccp "${PWD}/chaincode-go" -ccl go -ccs 1
 ```
 
 ## Install the application dependencies
