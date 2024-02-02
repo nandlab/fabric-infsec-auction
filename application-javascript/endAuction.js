@@ -103,10 +103,13 @@ async function main () {
 
 			const winner = Buffer.from(auctionResult.winner, 'base64');
 			const hammerPrice = BigInt(auctionResult.hammerPrice);
+			const winnerCert = new X509Certificate(winner);
+			const winnerSubject = winnerCert.subject;
 
-			console.log("The auction winner is:");
-			console.log(new X509Certificate(winner).toString());
+			console.log(`The auction winner is: ${winnerSubject}`);
 			console.log(`The hammer price is: ${hammerPrice}`);
+			console.log("Full X.509 certificate of the winner:");
+			console.log(winnerCert);
 		}
 		finally {
 			if (contract !== null && contractListener !== null) {
