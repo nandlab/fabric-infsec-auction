@@ -49,10 +49,27 @@ async function main () {
 		let contractListener = null;
 
 		try {
+			let ccp = null;
+			let walletPath = null;
+			if (org === 'org1') {
+				ccp = buildCCPOrg1();
+				walletPath = path.join(__dirname, 'wallet/org1');
+			}
+			else if (org === 'org2') {
+				ccp = buildCCPOrg2();
+				walletPath = path.join(__dirname, 'wallet/org2');
+			}
+			else {
+				console.error('Org must be org1 or org2 ...');
+				process.exit(1);
+			}
+			const wallet = await buildWallet(Wallets, walletPath);
+
+			// Establish a connection to listen to the auction event
 			gateway = new Gateway();
 			await gateway.connect(ccp,
-				{ wallet: wallet, identity: "admin", discovery: { enabled: true, asLocalhost: true } });
-		
+				{ wallet: wallet, identity: user, discovery: { enabled: true, asLocalhost: true } });		
+			
 			// Listen to auction events
 			const network = await gateway.getNetwork(myChannel);
 			contract = network.getContract(myChaincodeName);
@@ -71,21 +88,7 @@ async function main () {
 			};
 			contract.addContractListener(contractListener);
 
-			let ccp = null;
-			let walletPath = null;
-			if (org === 'org1') {
-				ccp = buildCCPOrg1();
-				walletPath = path.join(__dirname, 'wallet/org1');
-			}
-			else if (org === 'org2') {
-				ccp = buildCCPOrg2();
-				walletPath = path.join(__dirname, 'wallet/org2');
-			}
-			else {
-				console.error('Org must be org1 or org2 ...');
-				process.exit(1);
-			}
-			const wallet = await buildWallet(Wallets, walletPath);
+			// End the auction
 			await endAuction(ccp, wallet, user, auctionName);
 
 			// Wait for the auction to end
