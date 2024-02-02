@@ -6,8 +6,9 @@ package auction
 
 import (
 	"crypto/rand"
-	"encoding/base64"
+	"crypto/x509"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -39,8 +40,8 @@ type Bid struct {
 	BidPrice     uint64 `json:"bidPrice"` // 0 means hidden, later set the actual bid price during reveal
 	HiddenCommit []byte `json:"hiddenCommit"`
 	/*
-		HiddenCommit is the 64 byte SHAKE256 output of (clientID, bidPrice, salt)
-		* clientID is a string (?)
+		HiddenCommit is the 64 byte SHAKE256 output of (clientCert, bidPrice, salt)
+		* clientCert is the X.509 client certificate in DER format
 		* the bidPrice is a big endian encoded 64 bit integer
 		* salt should be at least 64 bytes long
 	*/
@@ -95,17 +96,6 @@ func putAuction(ctx contractapi.TransactionContextInterface, auction *Auction) e
 		return err
 	}
 	return ctx.GetStub().PutState(auctionKey(auction.Name), auctionBin)
-}
-
-/**************** AUCTION GENERAL METHODS ****************/
-// GetClientID returns the client ID string
-func (s *SmartContract) GetClientID(ctx contractapi.TransactionContextInterface) (error, *string) {
-	// get ID of submitting client
-	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
-	if errClientID != nil {
-		return fmt.Errorf("failed to get client identity: %v", errClientID), nil
-	}
-	return nil, &clientID
 }
 
 /**************** AUCTION SELLER METHODS ****************/
@@ -252,21 +242,24 @@ func (s *SmartContract) EndAuction(ctx contractapi.TransactionContextInterface, 
 	}
 
 	// Determine hammer price
-	hammerPrice := bidPriceToBuyer[0].BidPrice
+	highestPrice := bidPriceToBuyer[0].BidPrice
+	hammerPrice := highestPrice
 	if len(bidPriceToBuyer) > 1 {
 		hammerPrice = bidPriceToBuyer[1].BidPrice
 	}
 
 	// If there are multiple bidders with the same highest bid, one is chosen at random
+	// Potential problem: if there are multiple endorsers, their outcomes might not match
 	numberOfCandidates := uint(0)
 	for i := range bidPriceToBuyer {
-		if bidPriceToBuyer[i].BidPrice < hammerPrice {
+		if bidPriceToBuyer[i].BidPrice < highestPrice {
 			break
 		}
 		numberOfCandidates += 1
 	}
-	winningCandidate, errRand := rand.Int(rand.Reader, new(big.Int).SetUint64(uint64(numberOfCandidates)))
-	if errRand == nil {
+	numberOfCandidatesBigInt := new(big.Int).SetUint64(uint64(numberOfCandidates))
+	winningCandidate, errRand := rand.Int(rand.Reader, numberOfCandidatesBigInt)
+	if errRand != nil {
 		return fmt.Errorf("could not get a random number: %v", errRand)
 	}
 
@@ -294,8 +287,19 @@ func (s *SmartContract) EndAuction(ctx contractapi.TransactionContextInterface, 
 /**************** AUCTION BIDDER METHODS ****************/
 
 // Bid is called by a bidder to submit a hidden bid
-func (s *SmartContract) Bid(ctx contractapi.TransactionContextInterface, auctionName string, hiddenCommit []byte) error {
-	// get ID of submitting client
+func (s *SmartContract) Bid(ctx contractapi.TransactionContextInterface, auctionName string, hiddenCommitHex string) error {
+	// Decode hidden commit
+	hiddenCommit, errDecode := hex.DecodeString(hiddenCommitHex)
+	if errDecode != nil {
+		return fmt.Errorf("could not decode hidden commit: %v", errDecode)
+	}
+
+	// The hiddenCommit should be a 512 bit long hash
+	if len(hiddenCommit) != 64 {
+		return fmt.Errorf("hiddenCommit is not 512 bit long")
+	}
+
+	// Get ID of submitting client
 	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
 	if errClientID != nil {
 		return fmt.Errorf("failed to get client identity: %v", errClientID)
@@ -331,11 +335,36 @@ func (s *SmartContract) Bid(ctx contractapi.TransactionContextInterface, auction
 	return nil
 }
 
+func hashBid(clientCert *x509.Certificate, bidPrice uint64, salt []byte) ([]byte, error) {
+	shake := sha3.NewShake256()
+	bidPriceBytes := [8]byte{}
+	binary.BigEndian.PutUint64(bidPriceBytes[:], bidPrice)
+	for _, data := range [][]byte{clientCert.Raw, bidPriceBytes[:], salt} {
+		_, errShakeWrite := shake.Write(data)
+		if errShakeWrite != nil {
+			return nil, fmt.Errorf("failed to write data to SHAKE: %v", errShakeWrite)
+		}
+	}
+	hash := make([]byte, 64)
+	_, errShakeRead := shake.Read(hash)
+	if errShakeRead != nil {
+		return nil, fmt.Errorf("failed to read data from SHAKE: %v", errShakeRead)
+	}
+	return hash, nil
+}
+
 // OpenBid reveals the bid price of a bid
-func (s *SmartContract) OpenBid(ctx contractapi.TransactionContextInterface, auctionName string, bidPrice uint64, salt []byte) error {
+func (s *SmartContract) OpenBid(ctx contractapi.TransactionContextInterface, auctionName string, bidPrice uint64, saltHex string) error {
+
 	// Check if the bidPrice is reasonable
 	if bidPrice == 0 {
 		return fmt.Errorf("bid price cannot be zero")
+	}
+
+	// Decode hidden commit
+	salt, errSaltDecode := hex.DecodeString(saltHex)
+	if errSaltDecode != nil {
+		return fmt.Errorf("could not decode salt: %v", errSaltDecode)
 	}
 
 	// Check salt minimum requirements
@@ -358,31 +387,22 @@ func (s *SmartContract) OpenBid(ctx contractapi.TransactionContextInterface, auc
 		return fmt.Errorf("auction not found")
 	}
 
+	clientCert, errCert := ctx.GetClientIdentity().GetX509Certificate()
+	if errCert != nil {
+		return fmt.Errorf("could not get client certificate")
+	}
+
+	bidHash, errHashBid := hashBid(clientCert, bidPrice, salt)
+	if errHashBid != nil {
+		return errHashBid
+	}
+
 	// Iterate over the bids and try to reveal any
 	for i := range auction.Bids {
 		bid := &auction.Bids[i]
 		if bid.Buyer == clientID && bid.BidPrice == 0 {
-			// Compute hash
-			shake := sha3.NewShake256()
-			bidPriceBytes := [8]byte{}
-			binary.BigEndian.PutUint64(bidPriceBytes[:], bidPrice)
-			clientIDBytes, errClientIDDecode := base64.StdEncoding.DecodeString(clientID)
-			if errClientIDDecode != nil {
-				return fmt.Errorf("base64 decoding of client ID failed: %v", errClientIDDecode)
-			}
-			for _, data := range [][]byte{clientIDBytes, bidPriceBytes[:], salt} {
-				_, errShakeWrite := shake.Write(data)
-				if errShakeWrite != nil {
-					return fmt.Errorf("failed to write data to SHAKE: %v", errShakeWrite)
-				}
-			}
-			var hash [64]byte
-			_, errShakeRead := shake.Read(hash[:])
-			if errShakeRead != nil {
-				return fmt.Errorf("failed to read data from SHAKE: %v", errShakeRead)
-			}
 			// Check if hidden commit matches the hash
-			if reflect.DeepEqual(bid.HiddenCommit, hash) {
+			if reflect.DeepEqual(bid.HiddenCommit, bidHash) {
 				// The bid price is revealed
 				bid.BidPrice = bidPrice
 			}

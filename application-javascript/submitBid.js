@@ -9,6 +9,7 @@
 const { Gateway, Wallets } = require('fabric-network');
 const path = require('path');
 const { buildCCPOrg1, buildCCPOrg2, buildWallet, prettyJSONString } = require('/home/fabric-user/fabric-samples/test-application/javascript/AppUtil.js');
+const { X509Certificate } = require('node:crypto');
 
 const myChannel = 'mychannel';
 const myChaincodeName = 'auction';
@@ -16,23 +17,11 @@ const myChaincodeName = 'auction';
 const jsSHA = require("jssha");
 
 const { getRandomValues } = require('node:crypto');
+const { uint8ArrayToHex, uint64EncodeBidEndian, arrayToHexString } = require('./encode-utils.js');
 
-function uint64EncodeBidEndian(n) {
-	let buffer = new ArrayBuffer(8);
-	let view = new DataView(buffer);
-	view.setBigUint64(0, n);
-	return buffer;
-}
-
-function arrayToHexString(byteArray) {
-    return Array.from(byteArray, function(byte) {
-        return ('0' + (byte & 0xFF).toString(16)).slice(-2);
-    }).join('');
-}
-
-function hashBid(clientID, bidPrice, salt) {
+function hashBid(clientCert, bidPrice, salt) {
 	const shake = new jsSHA("SHAKE256", "UINT8ARRAY");
-	for (const data of [clientID, uint64EncodeBidEndian(bidPrice), salt]) {
+	for (const data of [clientCert.raw, new Uint8Array(uint64EncodeBidEndian(bidPrice)), salt]) {
 		shake.update(data);
 	}
 	return shake.getHash("UINT8ARRAY", {outputLen: 512});
@@ -53,14 +42,22 @@ async function submitBid (ccp, wallet, user, auctionName, bidPrice) {
 
 	const network = await gateway.getNetwork(myChannel);
 	const contract = network.getContract(myChaincodeName);
-	const clientIdResponse = await contract.submitTransaction('GetClientID');
-	console.log(clientIdResponse);
+	const clientID = gateway.getIdentity();
+
+	if (clientID.type !== "X.509") {
+		throw TypeError("Client ID should be a X.509 certificate");
+	}
+
+	const clientCert = new X509Certificate(clientID.credentials.certificate);
 
 	let salt = generateSalt();
-	let bidHash = hashBid(clientID, bidPrice, salt);
-	
-	console.log('\n--> Submit Transaction: Bid');
-	await statefulTxn.submit(auctionName, bidHash);
+	let bidHash = hashBid(clientCert, bidPrice, salt);
+	let bidHashHex = uint8ArrayToHex(bidHash);
+
+	console.log(`Hidden Bid Hash: ${bidHashHex}`);
+
+	console.log('--> Submit Transaction: Bid');
+	await contract.submitTransaction("Bid", auctionName, bidHashHex);
 	console.log('*** Result: committed');
 
 	gateway.disconnect();

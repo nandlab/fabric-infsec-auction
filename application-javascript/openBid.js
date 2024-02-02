@@ -9,6 +9,7 @@
 const { Gateway, Wallets } = require('fabric-network');
 const path = require('path');
 const { buildCCPOrg1, buildCCPOrg2, buildWallet, prettyJSONString } = require('/home/fabric-user/fabric-samples/test-application/javascript/AppUtil.js');
+const { uint8ArrayToHex } = require('./encode-utils.js');
 
 const myChannel = 'mychannel';
 const myChaincodeName = 'auction';
@@ -26,7 +27,7 @@ async function openBid (ccp, wallet, user, auctionName, bidPrice, salt) {
 	const statefulTxn = contract.createTransaction('OpenBid');
 
 	console.log('\n--> Submit Transaction: Open Bid');
-	await statefulTxn.submit(auctionName, bidPrice, salt);
+	await statefulTxn.submit(auctionName, bidPrice, uint8ArrayToHex(salt));
 	console.log('*** Result: committed');
 
 	gateway.disconnect();
@@ -45,11 +46,8 @@ async function main () {
 		const user = process.argv[3];
 		const auctionName = process.argv[4];
 		const bidPrice = BigInt(process.argv[5]);
-		if (!salt.startsWith("0x")) {
-			salt = "0x" + salt;
-		}
-		salt = BigInt(salt);
-		
+		const salt = Uint8Array.from(Buffer.from(process.argv[6], 'hex'));
+
 		let ccp = null;
 		let walletPath = null;
 		if (org === 'org1') {
