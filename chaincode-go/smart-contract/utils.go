@@ -11,7 +11,7 @@ import (
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
-func (s *SmartContract) GetSubmittingClientIdentity(ctx contractapi.TransactionContextInterface) (string, error) {
+func (s *VickreyAuctionContract) GetSubmittingClientIdentity(ctx contractapi.TransactionContextInterface) (string, error) {
 
 	b64ID, err := ctx.GetClientIdentity().GetID()
 	if err != nil {

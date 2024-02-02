@@ -19,8 +19,8 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-// This contract implements a Vickrey auction
-type SmartContract struct {
+// Vickrey auction smart contract
+type VickreyAuctionContract struct {
 	contractapi.Contract
 }
 
@@ -143,7 +143,7 @@ func hashBid(clientCert *x509.Certificate, bidPrice uint64, salt []byte) ([]byte
 /**************** AUCTION SELLER METHODS ****************/
 
 // CreateAuction creates a new auction
-func (s *SmartContract) CreateAuction(ctx contractapi.TransactionContextInterface, auctionName string, directBuyPrice uint64) error {
+func (s *VickreyAuctionContract) CreateAuction(ctx contractapi.TransactionContextInterface, auctionName string, directBuyPrice uint64) error {
 
 	// get ID of submitting client
 	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
@@ -192,7 +192,7 @@ func (s *SmartContract) CreateAuction(ctx contractapi.TransactionContextInterfac
 }
 
 // UpdateAuctionStatus updates the auction status (this can only be done by the auction seller)
-func (s *SmartContract) CloseAuction(ctx contractapi.TransactionContextInterface, auctionName string) error {
+func (s *VickreyAuctionContract) CloseAuction(ctx contractapi.TransactionContextInterface, auctionName string) error {
 
 	// Get ID of submitting client
 	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
@@ -243,7 +243,7 @@ func (s *SmartContract) CloseAuction(ctx contractapi.TransactionContextInterface
 }
 
 // EndAuction determines the highest bidder and the hammer price
-func (s *SmartContract) EndAuction(ctx contractapi.TransactionContextInterface, auctionName string) error {
+func (s *VickreyAuctionContract) EndAuction(ctx contractapi.TransactionContextInterface, auctionName string) error {
 	// Get ID of submitting client
 	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
 	if errClientID != nil {
@@ -389,7 +389,7 @@ func (s *SmartContract) EndAuction(ctx contractapi.TransactionContextInterface, 
 // Bid is called by a bidder to submit a hidden bid
 // Apparently, it is not possible to pass a byte array to the contract,
 // therefore the client has to send the hidden commit hex encoded.
-func (s *SmartContract) Bid(ctx contractapi.TransactionContextInterface, auctionName string, hiddenCommitHex string) error {
+func (s *VickreyAuctionContract) Bid(ctx contractapi.TransactionContextInterface, auctionName string, hiddenCommitHex string) error {
 	// Decode hidden commit
 	hiddenCommit, errDecode := hex.DecodeString(hiddenCommitHex)
 	if errDecode != nil {
@@ -438,7 +438,7 @@ func (s *SmartContract) Bid(ctx contractapi.TransactionContextInterface, auction
 }
 
 // OpenBid reveals the bid price of a bid
-func (s *SmartContract) OpenBid(ctx contractapi.TransactionContextInterface, auctionName string, bidPrice uint64, saltHex string) error {
+func (s *VickreyAuctionContract) OpenBid(ctx contractapi.TransactionContextInterface, auctionName string, bidPrice uint64, saltHex string) error {
 
 	// Check if the bidPrice is reasonable
 	if bidPrice == 0 {
@@ -503,7 +503,7 @@ func (s *SmartContract) OpenBid(ctx contractapi.TransactionContextInterface, auc
 }
 
 // DirectBuy: The buyer should pay at least auction.DirectBuyPrice to directly purchase the auction item
-func (s *SmartContract) DirectBuy(ctx contractapi.TransactionContextInterface, auctionName string, price uint64) error {
+func (s *VickreyAuctionContract) DirectBuy(ctx contractapi.TransactionContextInterface, auctionName string, price uint64) error {
 	// Get ID of submitting client
 	clientID, errClientID := s.GetSubmittingClientIdentity(ctx)
 	if errClientID != nil {

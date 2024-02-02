@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	auctionSmartContract, err := contractapi.NewChaincode(&auction.SmartContract{})
+	auctionSmartContract, err := contractapi.NewChaincode(&auction.VickreyAuctionContract{})
 	if err != nil {
 		log.Panicf("Error creating auction chaincode: %v", err)
 	}
