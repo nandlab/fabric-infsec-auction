@@ -31,7 +31,6 @@ const (
 	Open   AuctionStatus = iota // Buyers can send hidden bids or direct buy
 	Closed                      // Buyers opens bids
 	Ended                       // Auction is closed and winner is set
-	NumberOfStatuses
 )
 
 // Bid data
@@ -47,7 +46,6 @@ type Bid struct {
 	*/
 }
 
-// Auction data
 type Auction struct {
 	Name           string        `json:"name"`   // The auction name should be globally unique
 	Seller         string        `json:"seller"` // The seller who opened this auction
@@ -56,6 +54,21 @@ type Auction struct {
 	Bids           []Bid         `json:"bids"`
 	Winner         *string       `json:"winner"`
 	HammerPrice    uint64        `json:"hammerPrice"`
+}
+
+// Auction status information, which will be presented to the users in an event
+type AuctionSummary struct {
+	Name           string         `json:"name"`
+	Seller         string         `json:"seller"`
+	Status         AuctionStatus  `json:"status"`
+	DirectBuyPrice uint64         `json:"directBuyPrice"`
+	Result         *AuctionResult `json:"result"`
+}
+
+type AuctionResult struct {
+	Winner      *string `json:"winner"`
+	DirectBuy   bool    `json:"directBuy"` // If true, the winner bought directly, otherwise they were the highest bidder
+	HammerPrice uint64  `json:"hammerPrice"`
 }
 
 //**************************************************************
@@ -98,6 +111,35 @@ func putAuction(ctx contractapi.TransactionContextInterface, auction *Auction) e
 	return ctx.GetStub().PutState(auctionKey(auction.Name), auctionBin)
 }
 
+func setAuctionSummaryEvent(ctx contractapi.TransactionContextInterface, auctionSummary *AuctionSummary) error {
+	if auctionSummary == nil {
+		return fmt.Errorf("auctionSummary cannot be nil")
+	}
+	auctionSummaryBin, err := json.Marshal(auctionSummary)
+	if err != nil {
+		return err
+	}
+	return ctx.GetStub().SetEvent(auctionKey(auctionSummary.Name), auctionSummaryBin)
+}
+
+func hashBid(clientCert *x509.Certificate, bidPrice uint64, salt []byte) ([]byte, error) {
+	shake := sha3.NewShake256()
+	bidPriceBytes := [8]byte{}
+	binary.BigEndian.PutUint64(bidPriceBytes[:], bidPrice)
+	for _, data := range [][]byte{clientCert.Raw, bidPriceBytes[:], salt} {
+		_, errShakeWrite := shake.Write(data)
+		if errShakeWrite != nil {
+			return nil, fmt.Errorf("failed to write data to SHAKE: %v", errShakeWrite)
+		}
+	}
+	hash := make([]byte, 64)
+	_, errShakeRead := shake.Read(hash)
+	if errShakeRead != nil {
+		return nil, fmt.Errorf("failed to read data from SHAKE: %v", errShakeRead)
+	}
+	return hash, nil
+}
+
 /**************** AUCTION SELLER METHODS ****************/
 
 // CreateAuction creates a new auction
@@ -128,10 +170,22 @@ func (s *SmartContract) CreateAuction(ctx contractapi.TransactionContextInterfac
 		Winner:         nil,
 		HammerPrice:    0,
 	}
-
 	errPutAuction := putAuction(ctx, &auction)
 	if errPutAuction != nil {
 		return fmt.Errorf("could not save the new auction in the world state: %v", errPutAuction)
+	}
+
+	// Inform the users about the auction creation
+	auctionSummaryErr :=
+		setAuctionSummaryEvent(ctx, &AuctionSummary{
+			Name:           auction.Name,
+			Seller:         auction.Seller,
+			Status:         auction.Status,
+			DirectBuyPrice: auction.DirectBuyPrice,
+			Result:         nil,
+		})
+	if auctionSummaryErr != nil {
+		return fmt.Errorf("could not set auction summary event: %v", auctionSummaryErr)
 	}
 
 	return nil
@@ -170,6 +224,19 @@ func (s *SmartContract) CloseAuction(ctx contractapi.TransactionContextInterface
 	errPutAuction := putAuction(ctx, auction)
 	if errPutAuction != nil {
 		return fmt.Errorf("failed to save the updated auction")
+	}
+
+	// Inform the users about the auction status change
+	auctionSummaryErr :=
+		setAuctionSummaryEvent(ctx, &AuctionSummary{
+			Name:           auction.Name,
+			Seller:         auction.Seller,
+			Status:         auction.Status,
+			DirectBuyPrice: auction.DirectBuyPrice,
+			Result:         nil,
+		})
+	if auctionSummaryErr != nil {
+		return fmt.Errorf("could not set auction summary event: %v", auctionSummaryErr)
 	}
 
 	return nil
@@ -235,51 +302,84 @@ func (s *SmartContract) EndAuction(ctx contractapi.TransactionContextInterface, 
 		return bidPriceToBuyer[i].BidPrice > bidPriceToBuyer[j].BidPrice
 	})
 
+	var auctionSummary *AuctionSummary = nil
 	if len(bidPriceToBuyer) == 0 {
 		// No bids submitted => no winner
-		fmt.Printf("No bids were submitted, auction ended without a winner\n")
-		return nil
-	}
+		// Update auction state
+		auction.HammerPrice = 0
+		auction.Winner = nil
+		auction.Status = AuctionStatus(Ended)
 
-	// Determine hammer price
-	highestPrice := bidPriceToBuyer[0].BidPrice
-	hammerPrice := highestPrice
-	if len(bidPriceToBuyer) > 1 {
-		hammerPrice = bidPriceToBuyer[1].BidPrice
-	}
-
-	// If there are multiple bidders with the same highest bid, one is chosen at random
-	// Potential problem: if there are multiple endorsers, their outcomes might not match
-	numberOfCandidates := uint(0)
-	for i := range bidPriceToBuyer {
-		if bidPriceToBuyer[i].BidPrice < highestPrice {
-			break
+		// Set auction summary
+		auctionSummary = &AuctionSummary{
+			Name:           auction.Name,
+			Seller:         auction.Seller,
+			Status:         auction.Status,
+			DirectBuyPrice: auction.DirectBuyPrice,
+			Result: &AuctionResult{
+				Winner:      nil,
+				HammerPrice: 0,
+				DirectBuy:   false,
+			},
 		}
-		numberOfCandidates += 1
-	}
-	numberOfCandidatesBigInt := new(big.Int).SetUint64(uint64(numberOfCandidates))
-	winningCandidate, errRand := rand.Int(rand.Reader, numberOfCandidatesBigInt)
-	if errRand != nil {
-		return fmt.Errorf("could not get a random number: %v", errRand)
+	} else {
+		// Determine hammer price
+		highestPrice := bidPriceToBuyer[0].BidPrice
+		hammerPrice := highestPrice
+		if len(bidPriceToBuyer) > 1 {
+			hammerPrice = bidPriceToBuyer[1].BidPrice
+		}
+
+		// If there are multiple bidders with the same highest bid, one is chosen at random
+		// Potential problem: if there are multiple endorsers, their outcomes might not match
+		numberOfCandidates := uint(0)
+		for i := range bidPriceToBuyer {
+			if bidPriceToBuyer[i].BidPrice < highestPrice {
+				break
+			}
+			numberOfCandidates += 1
+		}
+		numberOfCandidatesBigInt := new(big.Int).SetUint64(uint64(numberOfCandidates))
+		winningCandidate, errRand := rand.Int(rand.Reader, numberOfCandidatesBigInt)
+		if errRand != nil {
+			return fmt.Errorf("could not get a random number: %v", errRand)
+		}
+
+		if !winningCandidate.IsUint64() {
+			return fmt.Errorf("winning candidate index cannot be represented as a uint64")
+		}
+		winner := &bidPriceToBuyer[winningCandidate.Uint64()].Buyer
+
+		// Update auction state
+		auction.HammerPrice = hammerPrice
+		auction.Winner = winner
+		auction.Status = AuctionStatus(Ended)
+
+		// Set auction summary
+		auctionSummary = &AuctionSummary{
+			Name:           auction.Name,
+			Seller:         auction.Seller,
+			Status:         auction.Status,
+			DirectBuyPrice: auction.DirectBuyPrice,
+			Result: &AuctionResult{
+				Winner:      auction.Winner,
+				HammerPrice: auction.HammerPrice,
+				DirectBuy:   false,
+			},
+		}
 	}
 
-	if !winningCandidate.IsUint64() {
-		return fmt.Errorf("winning candidate index cannot be represented as a uint64")
-	}
-	winner := &bidPriceToBuyer[winningCandidate.Uint64()].Buyer
-
-	// End the auction
-	auction.HammerPrice = hammerPrice
-	auction.Winner = winner
-	auction.Status = AuctionStatus(Ended)
+	// Save new auction state
 	errPutAuction := putAuction(ctx, auction)
 	if errPutAuction != nil {
 		return fmt.Errorf("could not save ended auction: %v", errPutAuction)
 	}
 
-	// Annouce the auction winner
-	fmt.Printf("Auction winner is: %s\n", *winner)
-	fmt.Printf("Item sold for: %d\n", hammerPrice)
+	// Set auction summary event
+	auctionSummaryErr := setAuctionSummaryEvent(ctx, auctionSummary)
+	if auctionSummaryErr != nil {
+		return fmt.Errorf("could not set auction summary event: %v", auctionSummaryErr)
+	}
 
 	return nil
 }
@@ -287,6 +387,8 @@ func (s *SmartContract) EndAuction(ctx contractapi.TransactionContextInterface, 
 /**************** AUCTION BIDDER METHODS ****************/
 
 // Bid is called by a bidder to submit a hidden bid
+// Apparently, it is not possible to pass a byte array to the contract,
+// therefore the client has to send the hidden commit hex encoded.
 func (s *SmartContract) Bid(ctx contractapi.TransactionContextInterface, auctionName string, hiddenCommitHex string) error {
 	// Decode hidden commit
 	hiddenCommit, errDecode := hex.DecodeString(hiddenCommitHex)
@@ -333,24 +435,6 @@ func (s *SmartContract) Bid(ctx contractapi.TransactionContextInterface, auction
 	}
 
 	return nil
-}
-
-func hashBid(clientCert *x509.Certificate, bidPrice uint64, salt []byte) ([]byte, error) {
-	shake := sha3.NewShake256()
-	bidPriceBytes := [8]byte{}
-	binary.BigEndian.PutUint64(bidPriceBytes[:], bidPrice)
-	for _, data := range [][]byte{clientCert.Raw, bidPriceBytes[:], salt} {
-		_, errShakeWrite := shake.Write(data)
-		if errShakeWrite != nil {
-			return nil, fmt.Errorf("failed to write data to SHAKE: %v", errShakeWrite)
-		}
-	}
-	hash := make([]byte, 64)
-	_, errShakeRead := shake.Read(hash)
-	if errShakeRead != nil {
-		return nil, fmt.Errorf("failed to read data from SHAKE: %v", errShakeRead)
-	}
-	return hash, nil
 }
 
 // OpenBid reveals the bid price of a bid
@@ -457,9 +541,22 @@ func (s *SmartContract) DirectBuy(ctx contractapi.TransactionContextInterface, a
 		return fmt.Errorf("could not save ended auction: %v", errPutAuction)
 	}
 
-	// Announce direct buy winner
-	fmt.Printf("Auction item purchased directly by: %s\n", clientID)
-	fmt.Printf("Item sold for: %d\n", price)
+	// Inform the users about the auction result
+	auctionSummaryErr :=
+		setAuctionSummaryEvent(ctx, &AuctionSummary{
+			Name:           auction.Name,
+			Seller:         auction.Seller,
+			Status:         auction.Status,
+			DirectBuyPrice: auction.DirectBuyPrice,
+			Result: &AuctionResult{
+				Winner:      auction.Winner,
+				HammerPrice: auction.HammerPrice,
+				DirectBuy:   true,
+			},
+		})
+	if auctionSummaryErr != nil {
+		return fmt.Errorf("could not set auction summary event: %v", auctionSummaryErr)
+	}
 
 	return nil
 }
