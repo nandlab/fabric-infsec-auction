@@ -6,162 +6,18 @@ package auction
 
 import (
 	"crypto/rand"
-	"crypto/x509"
-	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"math/big"
 	"reflect"
 	"sort"
 
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
-	"golang.org/x/crypto/sha3"
 )
 
 // Vickrey auction smart contract
 type VickreyAuctionContract struct {
 	contractapi.Contract
-}
-
-// enum possible status: open, closed, ended
-type AuctionStatus int
-
-const (
-	Open   AuctionStatus = iota // Buyers can send hidden bids or direct buy
-	Closed                      // Buyers opens bids
-	Ended                       // Auction is closed and winner is set
-)
-
-// certDerToPem converts a certificate from binary DER to PEM text format
-func certDerToPem(derCert []byte) *string {
-	pemCertBytes := pem.EncodeToMemory(&pem.Block{
-		Type:    "CERTIFICATE",
-		Headers: nil,
-		Bytes:   derCert,
-	})
-	if pemCertBytes == nil {
-		return nil
-	}
-	pemCert := string(pemCertBytes)
-	return &pemCert
-}
-
-// certPemToDer converts a certificate from PEM text to binary DER format
-func certPemToDer(pemCert string) []byte {
-	block, _ := pem.Decode([]byte(pemCert))
-	if block == nil {
-		return nil
-	}
-	return block.Bytes
-}
-
-// Bid data
-type Bid struct {
-	Buyer        []byte `json:"buyer"`    // the certificate of the potential buyer
-	BidPrice     uint64 `json:"bidPrice"` // 0 means hidden, later set the actual bid price during reveal
-	HiddenCommit []byte `json:"hiddenCommit"`
-	/*
-		HiddenCommit is the 64 byte SHAKE256 output of (clientCert, bidPrice, salt)
-		* clientCert is the X.509 client certificate in DER format
-		* the bidPrice is a big endian encoded 64 bit integer
-		* salt should be at least 64 bytes long
-	*/
-}
-
-type Auction struct {
-	Name           string        `json:"name"`   // The auction name should be globally unique
-	Seller         []byte        `json:"seller"` // The seller who opened this auction
-	Status         AuctionStatus `json:"status"`
-	DirectBuyPrice uint64        `json:"directBuyPrice"` // A buyer can directly buy the item by paying at least this price (0 means disabled)
-	Bids           []Bid         `json:"bids"`
-	Winner         []byte        `json:"winner"`
-	HammerPrice    uint64        `json:"hammerPrice"`
-}
-
-// Auction status information, which will be presented to the users in an event
-type AuctionSummary struct {
-	Name           string         `json:"name"`
-	Seller         []byte         `json:"seller"`
-	Status         AuctionStatus  `json:"status"`
-	DirectBuyPrice uint64         `json:"directBuyPrice"`
-	Result         *AuctionResult `json:"result"`
-}
-
-type AuctionResult struct {
-	Winner      []byte `json:"winner"`
-	DirectBuy   bool   `json:"directBuy"` // If true, the winner bought directly, otherwise they were the highest bidder
-	HammerPrice uint64 `json:"hammerPrice"`
-}
-
-//**************************************************************
-
-// auctionKey gets a world state key from the auction name
-func auctionKey(auctionName string) string {
-	return fmt.Sprintf("auction %s", auctionName)
-}
-
-// doesAuctionExist checks if an auction with the given name exists in the world state
-func doesAuctionExist(ctx contractapi.TransactionContextInterface, auctionName string) (bool, error) {
-	auctionBin, err := ctx.GetStub().GetState(auctionKey(auctionName))
-	if err != nil {
-		return false, err
-	}
-	exists := auctionBin != nil
-	return exists, nil
-}
-
-// getAuction retrieves the auction with the given name from the world state
-func getAuction(ctx contractapi.TransactionContextInterface, auctionName string) (*Auction, error) {
-	auctionBin, errGetState := ctx.GetStub().GetState(auctionKey(auctionName))
-	if errGetState != nil {
-		return nil, errGetState
-	}
-	var auction Auction
-	err := json.Unmarshal(auctionBin, &auction)
-	if err != nil {
-		return nil, err
-	}
-	return &auction, nil
-}
-
-// putAuction saves the given auction in the contract world state
-func putAuction(ctx contractapi.TransactionContextInterface, auction *Auction) error {
-	auctionBin, err := json.Marshal(auction)
-	if err != nil {
-		return err
-	}
-	return ctx.GetStub().PutState(auctionKey(auction.Name), auctionBin)
-}
-
-func setAuctionSummaryEvent(ctx contractapi.TransactionContextInterface, auctionSummary *AuctionSummary) error {
-	if auctionSummary == nil {
-		return fmt.Errorf("auctionSummary cannot be nil")
-	}
-	auctionSummaryBin, err := json.Marshal(auctionSummary)
-	if err != nil {
-		return err
-	}
-	return ctx.GetStub().SetEvent(auctionKey(auctionSummary.Name), auctionSummaryBin)
-}
-
-func hashBid(clientCert *x509.Certificate, bidPrice uint64, salt []byte) ([]byte, error) {
-	shake := sha3.NewShake256()
-	bidPriceBytes := [8]byte{}
-	binary.BigEndian.PutUint64(bidPriceBytes[:], bidPrice)
-	for _, data := range [][]byte{clientCert.Raw, bidPriceBytes[:], salt} {
-		_, errShakeWrite := shake.Write(data)
-		if errShakeWrite != nil {
-			return nil, fmt.Errorf("failed to write data to SHAKE: %v", errShakeWrite)
-		}
-	}
-	hash := make([]byte, 64)
-	_, errShakeRead := shake.Read(hash)
-	if errShakeRead != nil {
-		return nil, fmt.Errorf("failed to read data from SHAKE: %v", errShakeRead)
-	}
-	return hash, nil
 }
 
 /**************** AUCTION SELLER METHODS ****************/
